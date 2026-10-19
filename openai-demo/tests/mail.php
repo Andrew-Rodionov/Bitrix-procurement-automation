@@ -6,6 +6,7 @@ function test(bool $ok,string $name):void{if(!$ok)throw new RuntimeException("FA
 test(mailRecipients("a@example.org; b@example.org\na@example.org")===['a@example.org','b@example.org'],'recipients split and deduplicated');
 foreach(['bad-address','a@example.org,Bcc: attacker@example.org'] as $bad){try{mailRecipients($bad);throw new LogicException('Not rejected');}catch(RuntimeException $e){test(true,'invalid recipient rejected');}}
 $text='Цена 12500 рублей';
+test(mailDecodeHeader('Re: Предложение [ЗКП-тест]')==='Re: Предложение [ЗКП-тест]','literal SMTPUTF8 subject preserved');
 $encoded=base64_encode($text);
 $r=mailMessage("Subject: =?UTF-8?B?".base64_encode('Предложение')."?=\r\nFrom: supplier@example.org\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n".$encoded);
 test($r['subject']==='Предложение'&&$r['body']===$text,'UTF-8 header and base64 body');
@@ -15,6 +16,12 @@ test($r['body']==='Добрый день','Windows-1251 quoted printable');
 $raw="Content-Type: multipart/mixed; boundary=outer\r\n\r\n--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n--inner\r\nContent-Type: text/plain\r\n\r\nPlain offer\r\n--inner\r\nContent-Type: text/html\r\n\r\n<p>HTML offer</p>\r\n--inner--\r\n\r\n--outer\r\nContent-Type: application/pdf; name=offer.pdf\r\nContent-Disposition: attachment; filename=offer.pdf\r\nContent-Transfer-Encoding: base64\r\n\r\n".base64_encode('PDF attachment not text')."\r\n--outer--\r\n";
 $r=mailMessage($raw);
 test($r['body']==='Plain offer'&&$r['attachments']===['offer.pdf'],'multipart plain preferred and PDF excluded');
+$raw="Content-Type: multipart/related; boundary=pic\r\n\r\n--pic\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nЦена 100 рублей\r\n--pic\r\nContent-Type: image/png; name=47fc6cea.a1744c3f.png\r\nContent-Disposition: inline\r\nContent-Transfer-Encoding: base64\r\n\r\ninvalid image data, deliberately not decoded\r\n--pic--\r\n";
+$r=mailMessage($raw);
+test($r['body']==='Цена 100 рублей'&&$r['attachments']===[],'inline PNG ignored without decoding or listing');
+$r=mailMessage("Content-Type: application/octet-stream; name=PHOTO.JPG\r\nContent-Disposition: attachment; filename=PHOTO.JPG\r\nContent-Transfer-Encoding: base64\r\n\r\ninvalid");
+test($r['body']===''&&$r['attachments']===[],'photo with generic MIME ignored by filename');
+test(mailVisibleAttachments(['47fc6cea.a1744c3f.png','photo.JPEG','offer.pdf','Вложение (image/png)'])===['offer.pdf'],'old image metadata hidden while document warning retained');
 $r=mailMessage("Content-Type: text/html; charset=UTF-8\r\n\r\n<p>Offer &amp; price</p><script>bad()</script><img src='https://example.org/track'>");
 test($r['body']==='Offer & price','HTML converted to inert text');
 $dir=dirname(__DIR__,2).'/.runtime/mail-test-'.bin2hex(random_bytes(6));

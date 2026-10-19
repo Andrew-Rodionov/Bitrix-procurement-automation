@@ -13,6 +13,8 @@ function mailHeaders(string $raw): array {
     return $headers;
 }
 function mailDecodeHeader(string $value): string {
+    // SMTPUTF8 headers may contain literal Unicode; iconv_mime_decode treats it as ASCII and drops it.
+    if(!str_contains($value,'=?')&&preg_match('//u',$value))return $value;
     $decoded=iconv_mime_decode($value,ICONV_MIME_DECODE_CONTINUE_ON_ERROR,'UTF-8');
     return $decoded===false?$value:$decoded;
 }
@@ -25,6 +27,14 @@ function mailHtmlText(string $html): string {
     $html=preg_replace('~<(?:br\b[^>]*|/p|/div|/tr|/li)>~i',"\n",$html);
     return trim(html_entity_decode(strip_tags($html),ENT_QUOTES|ENT_HTML5,'UTF-8'));
 }
+function mailIsImageAttachment(string $name,string $media=''):bool {
+    return str_starts_with(strtolower($media),'image/')
+        ||preg_match('/\.(?:png|jpe?g|gif|webp|bmp|tiff?|svg|ico|heic|heif|avif)(?:\s|$)/iu',$name)===1
+        ||preg_match('/\(image\//i',$name)===1;
+}
+function mailVisibleAttachments(array $names):array {
+    return array_values(array_filter($names,static fn($name)=>is_string($name)&&!mailIsImageAttachment($name)));
+}
 function mailMime(string $raw,int $depth=0): array {
     if($depth>12)throw new RuntimeException('Слишком сложная структура письма.');
     $parts=preg_split("/\r?\n\r?\n/",$raw,2);
@@ -33,6 +43,8 @@ function mailMime(string $raw,int $depth=0): array {
     $media=strtolower(trim(explode(';',$type)[0]));
     $disposition=$headers['content-disposition']??'';
     $filename=mimeParameter($disposition,'filename')??mimeParameter($type,'name');
+    // Ignore images before decoding their data, including inline signature logos.
+    if(mailIsImageAttachment($filename?mailDecodeHeader($filename):'',$media))return ['plain'=>'','html'=>'','attachments'=>[]];
     if(str_starts_with(strtolower($disposition),'attachment')||$filename!==null){
         return ['plain'=>'','html'=>'','attachments'=>[$filename?mailDecodeHeader($filename):'Вложение']];
     }

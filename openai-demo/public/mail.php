@@ -4,6 +4,7 @@ require dirname(__DIR__).'/src/response.php';
 try {
     require dirname(__DIR__).'/src/config.php';
     require dirname(__DIR__).'/src/mail.php';
+    require dirname(__DIR__).'/src/procurement-store.php';
     if($_SERVER['REQUEST_METHOD']!=='POST')reply(['error'=>'Нужен POST-запрос.'],405);
     sessionInit();
     $csrf=$_POST['csrf']??'';
@@ -15,17 +16,26 @@ try {
         $auth=['address'=>$address,'password'=>$_POST['password']];
         // Only save credentials after the mail server confirms IMAP login.
         mailAuthenticate($auth);
+        $account=procurementAccount(mailConfig($auth));
+        procurementConnect(mailConfig($auth),true);
+        if(isset($_SESSION['mail_background_account'])&&$_SESSION['mail_background_account']!==$account)procurementDisconnectAccount($_SESSION['mail_background_account']);
         session_regenerate_id(true);
         unset($_SESSION['mailbox'],$_SESSION['mail_uids']);
         $_SESSION['mail_auth']=$auth;$_SESSION['mail_activity']=time();
+        $_SESSION['mail_background_account']=$account;
         session_write_close();
         reply(['result'=>['connected'=>true,'address'=>$address]]);
     }
     if($action==='logout'){
+        $account=$_SESSION['mail_background_account']??(isset($_SESSION['mail_auth'])?procurementAccount(mailConfig()):null);
+        if($account===null)reply(['error'=>'Сеанс истёк. Войдите в почту снова, затем выйдите, чтобы отключить фоновое подключение.'],401);
+        procurementDisconnectAccount($account);unset($_SESSION['mail_background_account']);
         unset($_SESSION['mail_auth'],$_SESSION['mail_activity'],$_SESSION['mailbox'],$_SESSION['mail_uids']);
         session_regenerate_id(true);session_write_close();
         reply(['result'=>['connected'=>false]]);
     }
+
+    if(!isset($_SESSION['mail_auth']))reply(['error'=>'Сеанс истёк. Войдите в почту снова.'],401);
 
     if($action==='list'){
         session_write_close();$data=inboxList();
